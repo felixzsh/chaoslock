@@ -57,7 +57,9 @@ def hash_password(password):
 def setup():
     """Setup password for first use"""
     if os.path.exists(PASSWORD_FILE):
-        print("System already configured, rm .password_hash to setup the password again.")
+        print(
+            "System already configured, rm .password_hash to setup the password again."
+        )
         return False
 
     password = get_password("Enter password: ")
@@ -181,16 +183,8 @@ def decrypt(file_path):
         fernet = Fernet(key)
         decrypted = fernet.decrypt(encrypted)
 
-        base_name = os.path.basename(file_path)
-        if base_name.endswith(".enc"):
-            output_name = f"{base_name[:-4]}_decrypted.txt"
-        else:
-            output_name = f"{base_name}_decrypted.txt"
+        print(decrypted.decode())
 
-        with open(output_name, "wb") as f:
-            f.write(decrypted)
-
-        print(f"File '{file_path}' decrypted as '{output_name}'")
         return True
     except Exception as e:
         print(f"Error decrypting file: {e}")
@@ -221,14 +215,40 @@ def list_files():
         print(f"No encrypted files in '{VAULT_DIR}'")
 
 
+def rand():
+    """Return a random number from encrypted files"""
+    if not os.path.exists(VAULT_DIR):
+        print(f"No encrypted files in '{VAULT_DIR}'")
+        return False
+
+    files = []
+    for filename in os.listdir(VAULT_DIR):
+        if filename.endswith(".enc") and len(filename) == 8:
+            try:
+                num = int(filename[:4])
+                if 0 <= num <= 9999:
+                    files.append(num)
+            except ValueError:
+                continue
+
+    if not files:
+        print(f"No encrypted files in '{VAULT_DIR}'")
+        return False
+
+    random_number = random.choice(files)
+    print(random_number)
+    return True
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python crypter.py <command> [arguments]")
+        print("Usage: python textlock.py <command> [arguments]")
         print("Commands:")
         print("  setup                    - Setup password")
-        print("  crypt <file>             - Encrypt file")
+        print("  encrypt <file>           - Encrypt file")
         print("  decrypt <encrypted_file> - Decrypt file")
         print("  list                     - List encrypted files")
+        print("  rand                     - Get random number from encrypted files")
         sys.exit(1)
 
     command = sys.argv[1].lower()
@@ -251,9 +271,12 @@ def main():
     elif command == "list":
         list_files()
 
+    elif command == "rand":
+        rand()
+
     else:
         print(f"Error: Unknown command '{command}'")
-        print("Valid commands: setup, crypt, decrypt, list")
+        print("Valid commands: setup, encrypt, decrypt, list, rand")
         sys.exit(1)
 
 
