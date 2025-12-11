@@ -1,0 +1,21 @@
+[project]
+name = "chaoslock"
+version = "0.1.0"
+description = "cli tool for locking secrets and randomly select them."
+authors = [
+    {name = "felixzsh",email = "felix.sanchez.dev@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "typer (>=0.20.0,<0.21.0)",
+    "cryptography (>=46.0.3,<47.0.0)"
+]
+
+[project.scripts]
+chaoslock = "chaoslock:app"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

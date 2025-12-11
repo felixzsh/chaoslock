@@ -7,29 +7,29 @@ CLI tool for securely encrypting files and random selection.
 ```bash
 git clone https://github.com/felix/chaoslock
 cd chaoslock
-pip install -r requirements.txt
+poetry install
 ```
 
 ## Usage
 
 ```bash
 # Setup password (first time only)
-python chaoslock.py setup
+poetry run chaoslock setup
 
 # Encrypt a file
-python chaoslock.py encrypt my_diary.txt
+poetry run chaoslock encrypt my_diary.txt
 
 # Decrypt a file
-python chaoslock.py decrypt vault/1234.enc
+poetry run chaoslock decrypt vault/1234.enc
 
 # List encrypted files
-python chaoslock.py list
+poetry run chaoslock list
 
 # Get random number from encrypted files
-python chaoslock.py rand
+poetry run chaoslock rand
 
 # Get random number excluding recent files
-python chaoslock.py rand --exclude-last-days=7
+poetry run chaoslock rand --exclude-last-days=7
 ```
 
 ## Commands
