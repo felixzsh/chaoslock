@@ -5,6 +5,7 @@ import hashlib
 import random
 from cryptography.fernet import Fernet
 import base64
+import datetime
 
 PASSWORD_FILE = ".password_hash"
 VAULT_DIR = "vault"
@@ -215,26 +216,49 @@ def list_files():
         print(f"No encrypted files in '{VAULT_DIR}'")
 
 
-def rand():
-    """Return a random number from encrypted files"""
+def rand(exclude_last_days=None):
+    """Return a random number from encrypted files, shuffling vault and optionally filtering by date
+
+    Args:
+        exclude_last_days (int, optional): Exclude files modified within the last N days
+    """
     if not os.path.exists(VAULT_DIR):
         print(f"No encrypted files in '{VAULT_DIR}'")
         return False
 
     files = []
+    now = datetime.datetime.now()
+
     for filename in os.listdir(VAULT_DIR):
         if filename.endswith(".enc") and len(filename) == 8:
             try:
                 num = int(filename[:4])
                 if 0 <= num <= 9999:
-                    files.append(num)
-            except ValueError:
+                    file_path = os.path.join(VAULT_DIR, filename)
+                    mod_time = datetime.datetime.fromtimestamp(
+                        os.path.getmtime(file_path)
+                    )
+
+                    if exclude_last_days is not None:
+                        cutoff_time = now - datetime.timedelta(days=exclude_last_days)
+                        if mod_time < cutoff_time:
+                            files.append(num)
+                    else:
+                        files.append(num)
+            except (ValueError, OSError):
+                print(f"Error: Invalid file name. Skipping: {filename}")
                 continue
 
     if not files:
-        print(f"No encrypted files in '{VAULT_DIR}'")
+        if exclude_last_days is not None:
+            print(
+                f"No encrypted files older than {exclude_last_days} days in '{VAULT_DIR}'"
+            )
+        else:
+            print(f"No encrypted files in '{VAULT_DIR}'")
         return False
 
+    random.shuffle(files)
     random_number = random.choice(files)
     print(random_number)
     return True
@@ -248,7 +272,9 @@ def main():
         print("  encrypt <file>           - Encrypt file")
         print("  decrypt <encrypted_file> - Decrypt file")
         print("  list                     - List encrypted files")
-        print("  rand                     - Get random number from encrypted files")
+        print(
+            "  rand [--exclude-last-days=<days>] - Get random number from encrypted files"
+        )
         sys.exit(1)
 
     command = sys.argv[1].lower()
@@ -272,7 +298,25 @@ def main():
         list_files()
 
     elif command == "rand":
-        rand()
+        exclude_days = None
+        if len(sys.argv) > 2:
+            for i in range(2, len(sys.argv)):
+                if sys.argv[i].startswith("--exclude-last-days="):
+                    try:
+                        exclude_days = int(sys.argv[i].split("=")[1])
+                        if exclude_days < 0:
+                            print(
+                                "Error: exclude-last-days must be a non-negative integer"
+                            )
+                            sys.exit(1)
+                    except ValueError:
+                        print("Error: exclude-last-days must be an integer")
+                        sys.exit(1)
+                else:
+                    print(f"Error: Unknown argument '{sys.argv[i]}'")
+                    print("Usage: python textlock.py rand [--exclude-last-days=<days>]")
+                    sys.exit(1)
+        rand(exclude_days)
 
     else:
         print(f"Error: Unknown command '{command}'")
