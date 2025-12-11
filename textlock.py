@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
+"""TextLock - CLI for secure file encryption and management"""
 import sys
-import os
 import hashlib
 import random
+from pathlib import Path
 from cryptography.fernet import Fernet
 import base64
 import datetime
+import typer
+from typing_extensions import Annotated
+
+app = typer.Typer(help="Password-based file encryption system")
 
 PASSWORD_FILE = ".password_hash"
 VAULT_DIR = "vault"
 
 
-def get_password(prompt="Password: "):
+def get_password(prompt: str = "Password: ") -> str:
     """Get password with asterisks display"""
     import termios
     import tty
@@ -22,16 +27,15 @@ def get_password(prompt="Password: "):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
+    typer.echo(prompt, nl=False)
     password = []
 
     try:
         tty.setraw(fd)
         while True:
             ch = sys.stdin.read(1)
-            if ch == "\n" or ch == "\r":
-                sys.stdout.write("\r\n")
+            if ch in ("\n", "\r"):
+                typer.echo()
                 break
             elif ch == "\x03":  # Ctrl-C
                 raise KeyboardInterrupt
@@ -50,65 +54,39 @@ def get_password(prompt="Password: "):
     return "".join(password)
 
 
-def hash_password(password):
+def hash_password(password: str) -> str:
     """Create SHA-256 hash of password"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def setup():
-    """Setup password for first use"""
-    if os.path.exists(PASSWORD_FILE):
-        print(
-            "System already configured, rm .password_hash to setup the password again."
-        )
-        return False
-
-    password = get_password("Enter password: ")
-    confirm = get_password("Confirm password: ")
-
-    if password != confirm:
-        print("Error: Passwords don't match.")
-        return False
-
-    if len(password) < 8:
-        print("Warning: Password is too short (minimum 8 characters recommended).")
-
-    with open(PASSWORD_FILE, "w") as f:
-        f.write(hash_password(password))
-
-    print(f"Password configured successfully. Hash file created: {PASSWORD_FILE}")
-    return True
-
-
-def validate_password(password):
+def validate_password(password: str) -> bool:
     """Validate password against stored hash"""
-    if not os.path.exists(PASSWORD_FILE):
-        print("Error: System not configured. Run 'setup' first.")
-        return False
+    if not Path(PASSWORD_FILE).exists():
+        typer.secho("Error: System not configured. Run 'setup' first.", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
-    with open(PASSWORD_FILE, "r") as f:
-        stored_hash = f.read().strip()
-
+    stored_hash = Path(PASSWORD_FILE).read_text().strip()
     return hash_password(password) == stored_hash
 
 
-def generate_key(password):
+def generate_key(password: str) -> bytes:
     """Generate encryption key from password"""
     salt = b"fixed_salt_for_simplicity"
     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000, 32)
     return base64.urlsafe_b64encode(key)
 
 
-def get_existing_filenames():
+def get_existing_filenames() -> set:
     """Get set of existing 4-digit encrypted filenames"""
-    if not os.path.exists(VAULT_DIR):
+    vault_path = Path(VAULT_DIR)
+    if not vault_path.exists():
         return set()
 
     existing = set()
-    for filename in os.listdir(VAULT_DIR):
-        if filename.endswith(".enc") and len(filename) == 8:
+    for file_path in vault_path.glob("*.enc"):
+        if len(file_path.stem) == 4:
             try:
-                num = int(filename[:4])
+                num = int(file_path.stem)
                 if 0 <= num <= 9999:
                     existing.add(num)
             except ValueError:
@@ -116,12 +94,12 @@ def get_existing_filenames():
     return existing
 
 
-def generate_unique_filename():
+def generate_unique_filename() -> str:
     """Generate unique 4-digit filename"""
     existing = get_existing_filenames()
 
     if len(existing) >= 10000:
-        raise Exception("No available filenames (all 0000-9999 used)")
+        raise Exception("No available filenames (all 0000-9999 are in use)")
 
     while True:
         num = random.randint(0, 9999)
@@ -129,115 +107,129 @@ def generate_unique_filename():
             return f"{num:04d}.enc"
 
 
-def encrypt(file_path):
-    """Encrypt a file"""
-    if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' doesn't exist.")
-        return False
+@app.command()
+def setup():
+    """Setup system password"""
+    if Path(PASSWORD_FILE).exists():
+        typer.secho(
+            f"System already configured. Delete '{PASSWORD_FILE}' to reconfigure.",
+            fg=typer.colors.YELLOW
+        )
+        raise typer.Exit(0)
 
     password = get_password("Enter password: ")
+    confirm = get_password("Confirm password: ")
+
+    if password != confirm:
+        typer.secho("Error: Passwords don't match.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    if len(password) < 8:
+        typer.secho("Warning: Password too short (minimum 8 characters recommended).", fg=typer.colors.YELLOW)
+
+    Path(PASSWORD_FILE).write_text(hash_password(password))
+    typer.secho(f"✓ Password configured successfully. Hash file created: {PASSWORD_FILE}", fg=typer.colors.GREEN)
+
+
+@app.command()
+def encrypt(file_path: Annotated[Path, typer.Argument(help="File to encrypt", exists=True, readable=True)]):
+    """Encrypt a file"""
+    password = get_password("Enter password: ")
     if not validate_password(password):
-        print("Error: Invalid password.")
-        return False
+        typer.secho("Error: Invalid password.", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
     try:
-        with open(file_path, "rb") as f:
-            content = f.read()
+        content = file_path.read_bytes()
 
         key = generate_key(password)
         fernet = Fernet(key)
         encrypted = fernet.encrypt(content)
 
         filename = generate_unique_filename()
-        encrypted_path = os.path.join(VAULT_DIR, filename)
+        vault_path = Path(VAULT_DIR)
+        vault_path.mkdir(exist_ok=True)
+        
+        encrypted_path = vault_path / filename
+        encrypted_path.write_bytes(encrypted)
 
-        os.makedirs(VAULT_DIR, exist_ok=True)
-        with open(encrypted_path, "wb") as f:
-            f.write(encrypted)
+        # Clear original file
+        file_path.write_bytes(b"")
 
-        with open(file_path, "wb") as f:
-            f.write(b"")
-
-        print(f"File '{file_path}' encrypted as '{filename}' (original file cleared)")
-        return True
+        typer.secho(f"✓ File '{file_path}' encrypted as '{filename}' (original file cleared)", fg=typer.colors.GREEN)
     except Exception as e:
-        print(f"Error encrypting file: {e}")
-        return False
+        typer.secho(f"Error encrypting file: {e}", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
 
-def decrypt(file_path):
-    """Decrypt a file"""
-    if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' doesn't exist.")
-        return False
-
+@app.command()
+def decrypt(file_path: Annotated[Path, typer.Argument(help="Encrypted file to decrypt", exists=True, readable=True)]):
+    """Decrypt and display file contents"""
     password = get_password("Enter password: ")
     if not validate_password(password):
-        print("Error: Invalid password.")
-        return False
+        typer.secho("Error: Invalid password.", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
     try:
-        with open(file_path, "rb") as f:
-            encrypted = f.read()
+        encrypted = file_path.read_bytes()
 
         key = generate_key(password)
         fernet = Fernet(key)
         decrypted = fernet.decrypt(encrypted)
 
-        print(decrypted.decode())
-
-        return True
+        typer.echo(decrypted.decode())
     except Exception as e:
-        print(f"Error decrypting file: {e}")
-        return False
+        typer.secho(f"Error decrypting file: {e}", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
 
+@app.command(name="list")
 def list_files():
     """List encrypted files"""
-    if not os.path.exists(VAULT_DIR):
-        print(f"No encrypted files in '{VAULT_DIR}'")
+    vault_path = Path(VAULT_DIR)
+    
+    if not vault_path.exists():
+        typer.secho(f"No encrypted files in '{VAULT_DIR}'", fg=typer.colors.YELLOW)
         return
 
     files = []
-    for filename in sorted(os.listdir(VAULT_DIR)):
-        if filename.endswith(".enc") and len(filename) == 8:
+    for file_path in sorted(vault_path.glob("*.enc")):
+        if len(file_path.stem) == 4:
             try:
-                num = int(filename[:4])
+                num = int(file_path.stem)
                 if 0 <= num <= 9999:
-                    files.append(filename)
+                    files.append(file_path.name)
             except ValueError:
                 continue
 
     if files:
-        print("Encrypted files:")
+        typer.secho("Encrypted files:", fg=typer.colors.CYAN, bold=True)
         for f in files:
-            print(f"  {f}")
+            typer.echo(f"  {f}")
     else:
-        print(f"No encrypted files in '{VAULT_DIR}'")
+        typer.secho(f"No encrypted files in '{VAULT_DIR}'", fg=typer.colors.YELLOW)
 
 
-def rand(exclude_last_days=None):
-    """Return a random number from encrypted files, shuffling vault and optionally filtering by date
-
-    Args:
-        exclude_last_days (int, optional): Exclude files modified within the last N days
-    """
-    if not os.path.exists(VAULT_DIR):
-        print(f"No encrypted files in '{VAULT_DIR}'")
-        return False
+@app.command()
+def rand(
+    exclude_last_days: Annotated[int | None, typer.Option(help="Exclude files modified in the last N days")] = None
+):
+    """Get a random number from encrypted files"""
+    vault_path = Path(VAULT_DIR)
+    
+    if not vault_path.exists():
+        typer.secho(f"No encrypted files in '{VAULT_DIR}'", fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
 
     files = []
     now = datetime.datetime.now()
 
-    for filename in os.listdir(VAULT_DIR):
-        if filename.endswith(".enc") and len(filename) == 8:
+    for file_path in vault_path.glob("*.enc"):
+        if len(file_path.stem) == 4:
             try:
-                num = int(filename[:4])
+                num = int(file_path.stem)
                 if 0 <= num <= 9999:
-                    file_path = os.path.join(VAULT_DIR, filename)
-                    mod_time = datetime.datetime.fromtimestamp(
-                        os.path.getmtime(file_path)
-                    )
+                    mod_time = datetime.datetime.fromtimestamp(file_path.stat().st_mtime)
 
                     if exclude_last_days is not None:
                         cutoff_time = now - datetime.timedelta(days=exclude_last_days)
@@ -245,84 +237,22 @@ def rand(exclude_last_days=None):
                             files.append(num)
                     else:
                         files.append(num)
-            except (ValueError, OSError):
-                print(f"Error: Invalid file name. Skipping: {filename}")
+            except (ValueError, OSError) as e:
+                typer.secho(f"Invalid file name. Skipping: {file_path.name}. Error: {e}", fg=typer.colors.YELLOW)
                 continue
 
     if not files:
+        msg = f"No encrypted files"
         if exclude_last_days is not None:
-            print(
-                f"No encrypted files older than {exclude_last_days} days in '{VAULT_DIR}'"
-            )
-        else:
-            print(f"No encrypted files in '{VAULT_DIR}'")
-        return False
+            msg += f" older than {exclude_last_days} days"
+        msg += f" in '{VAULT_DIR}'"
+        typer.secho(msg, fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
 
     random.shuffle(files)
     random_number = random.choice(files)
-    print(random_number)
-    return True
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python textlock.py <command> [arguments]")
-        print("Commands:")
-        print("  setup                    - Setup password")
-        print("  encrypt <file>           - Encrypt file")
-        print("  decrypt <encrypted_file> - Decrypt file")
-        print("  list                     - List encrypted files")
-        print(
-            "  rand [--exclude-last-days=<days>] - Get random number from encrypted files"
-        )
-        sys.exit(1)
-
-    command = sys.argv[1].lower()
-
-    if command == "setup":
-        setup()
-
-    elif command == "encrypt":
-        if len(sys.argv) < 3:
-            print("Usage: python crypter.py crypt <file>")
-            sys.exit(1)
-        encrypt(sys.argv[2])
-
-    elif command == "decrypt":
-        if len(sys.argv) < 3:
-            print("Usage: python crypter.py decrypt <encrypted_file>")
-            sys.exit(1)
-        decrypt(sys.argv[2])
-
-    elif command == "list":
-        list_files()
-
-    elif command == "rand":
-        exclude_days = None
-        if len(sys.argv) > 2:
-            for i in range(2, len(sys.argv)):
-                if sys.argv[i].startswith("--exclude-last-days="):
-                    try:
-                        exclude_days = int(sys.argv[i].split("=")[1])
-                        if exclude_days < 0:
-                            print(
-                                "Error: exclude-last-days must be a non-negative integer"
-                            )
-                            sys.exit(1)
-                    except ValueError:
-                        print("Error: exclude-last-days must be an integer")
-                        sys.exit(1)
-                else:
-                    print(f"Error: Unknown argument '{sys.argv[i]}'")
-                    print("Usage: python textlock.py rand [--exclude-last-days=<days>]")
-                    sys.exit(1)
-        rand(exclude_days)
-
-    else:
-        print(f"Error: Unknown command '{command}'")
-        print("Valid commands: setup, encrypt, decrypt, list, rand")
-        sys.exit(1)
+    typer.echo(random_number)
 
 
 if __name__ == "__main__":
-    main()
+    app()
