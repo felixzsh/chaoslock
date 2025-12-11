@@ -35,7 +35,7 @@ def get_password(prompt: str = "Password: ") -> str:
         while True:
             ch = sys.stdin.read(1)
             if ch in ("\n", "\r"):
-                typer.echo()
+                typer.echo("\r")
                 break
             elif ch == "\x03":  # Ctrl-C
                 raise KeyboardInterrupt
