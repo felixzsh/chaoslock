@@ -1,5 +1,6 @@
 __pycache__
 vault
 .password_hash
+vault_metadata.json
 input
 dist
