@@ -41,6 +41,11 @@ def _ensure_vault_dir() -> None:
     Path(VAULT_DIR).mkdir(exist_ok=True)
 
 
+def _file_id_to_path(file_id: int) -> Path:
+    """Convert file ID to file path with proper 4-digit padding"""
+    return Path(VAULT_DIR) / f"{file_id:04d}.enc"
+
+
 def _scan_existing_ids() -> List[int]:
     vault_path = Path(VAULT_DIR)
     if not vault_path.exists():
@@ -66,7 +71,7 @@ def _sync_metadata_with_files() -> Dict[int, Any]:
 
     for file_id in existing_ids:
         if file_id not in metadata:
-            file_path = Path(VAULT_DIR) / f"{file_id}.enc"
+            file_path = _file_id_to_path(file_id)
             mod_time = datetime.datetime.fromtimestamp(file_path.stat().st_mtime)
             metadata[file_id] = {
                 "created_at": mod_time.isoformat(),
@@ -115,7 +120,7 @@ def store(data: bytes) -> int:
     filename = gen_new_filename()
     file_id = int(filename.split(".")[0])
 
-    file_path = Path(VAULT_DIR) / filename
+    file_path = _file_id_to_path(file_id)
     file_path.write_bytes(data)
 
     metadata = get_metadata()
@@ -150,5 +155,5 @@ def mark_as_used(file_id: int) -> bool:
 
 
 def file_exists(file_id: int) -> bool:
-    file_path = Path(VAULT_DIR) / f"{file_id}.enc"
+    file_path = _file_id_to_path(file_id)
     return file_path.exists()
